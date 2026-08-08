@@ -1,0 +1,68 @@
+# Pre-commit configuration for reflex-openbb
+# Constitution Art. 9: pre-commit gate is non-negotiable.
+#
+# Install:    uv run pre-commit install
+# Run all:    uv run pre-commit run --all-files
+# Skip:       git commit --no-verify  (DON'T — Constitution Art. 9)
+#
+# Reference: https://pre-commit.com/
+
+default_language_version:
+  python: python3
+
+# Files to skip globally (in addition to .gitignore)
+exclude: |
+  (?x)^(
+      \.venv/.*|
+      uv\.lock|
+      \.reflex/.*|
+      dist/.*|
+      build/.*|
+      \.pytest_cache/.*
+  )$
+
+repos:
+  # ─── Secrets ───────────────────────────────────────────────────────────
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.18.4
+    hooks:
+      - id: gitleaks
+
+  # ─── Linting + Formatting (Ruff replaces Black, isort, flake8) ─────────
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.4.10
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+        types_or: [python, pyi]
+      - id: ruff-format
+        types_or: [python, pyi]
+
+  # ─── Type checking (Astral's ty — the new fast type-checker) ───────────
+  - repo: https://github.com/astral-sh/ty
+    rev: 0.0.1a3
+    hooks:
+      - id: ty
+        # ty is preview; --exit-zero keeps CI green while we iterate.
+        # Remove --exit-zero once we land strict mode in Phase 6.
+        args: [--exit-zero]
+
+  # ─── Security (Bandit for Python) ─────────────────────────────────────
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.7.9
+    hooks:
+      - id: bandit
+        args: [-c, pyproject.toml]
+        additional_dependencies: ["bandit[toml]"]
+
+  # ─── Standard hygiene ─────────────────────────────────────────────────
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-added-large-files
+      - id: check-merge-conflict
+      - id: debug-statements

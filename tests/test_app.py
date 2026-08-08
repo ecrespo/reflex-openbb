@@ -11,7 +11,6 @@ The first test verifies the home page exists and has the expected text.
 This is the TDD contract: if this test passes, the scaffold is correct.
 """
 
-import pytest
 import reflex as rx
 
 
@@ -23,6 +22,7 @@ def test_reflex_openbb_module_imports() -> None:
     (module structure).
     """
     import reflex_openbb
+
     assert hasattr(reflex_openbb, "__version__")
     assert reflex_openbb.__version__ == "0.1.0"
 

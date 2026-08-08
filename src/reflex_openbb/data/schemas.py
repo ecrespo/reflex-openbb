@@ -23,7 +23,7 @@ import polars as pl
 from pandera.errors import SchemaError, SchemaErrors
 
 from reflex_openbb.data.errors import ProviderError
-from reflex_openbb.data.types import OHLCBar
+from reflex_openbb.data.types import MacroPoint, OHLCBar
 
 # ─── Schemas ────────────────────────────────────────────────────────────────
 
@@ -145,8 +145,6 @@ def macro_points_from_dataframe(
     Raises:
         ProviderError: if the DataFrame fails schema validation.
     """
-    from reflex_openbb.data.types import MacroPoint  # avoid circular import
-
     # 1. Validate schema. Catch BOTH pandera errors and polars'
     #    ColumnNotFoundError.
     try:

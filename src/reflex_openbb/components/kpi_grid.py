@@ -2,17 +2,13 @@
 
 REQ: REQ-005
 
-Renders a 6-card grid of KPIs for an EquityQuote (or any object
-with the relevant fields):
-  1. Price
-  2. Day change %
-  3. Market cap
-  4. Volume
-  5. 52-week high
-  6. 52-week low
+Renders a 6-card grid of KPIs.
 
-If quote is None, shows a placeholder (REQ-005 O-where: the system
-shall display a placeholder if no data is available).
+Two calling patterns:
+1. **Production**: page passes pre-formatted strings (display vars
+   from EquityState) + `has_data: bool`. Used in the page.
+2. **Test**: page passes a Pydantic quote (EquityQuote or None) and
+   we extract + format the values ourselves.
 """
 
 from __future__ import annotations
@@ -23,10 +19,8 @@ __all__ = ["kpi_grid"]
 
 
 def _format_market_cap(mc) -> str:
-    """Format a market cap as a human-readable string (B / T)."""
     if mc is None:
         return "n/a"
-    # mc is a Decimal or int (compatible with both)
     value = float(mc)
     if value >= 1_000_000_000_000:
         return f"${value / 1_000_000_000_000:.2f}T"
@@ -38,7 +32,6 @@ def _format_market_cap(mc) -> str:
 
 
 def _format_volume(v) -> str:
-    """Format a volume number as a human-readable string (K / M / B)."""
     if v is None:
         return "n/a"
     value = float(v)
@@ -51,12 +44,11 @@ def _format_volume(v) -> str:
     return f"{value:,.0f}"
 
 
-def _kpi_card(label: str, value: str, *, accent: str = "blue") -> rx.Component:
-    """Render a single KPI card."""
+def _kpi_card(label: str, value) -> rx.Component:
     return rx.card(
         rx.vstack(
             rx.text(label, size="1", color="gray.500"),
-            rx.heading(value, size="6", color=f"{accent}.9"),
+            rx.heading(value, size="6"),
             align="start",
             spacing="1",
         ),
@@ -64,19 +56,14 @@ def _kpi_card(label: str, value: str, *, accent: str = "blue") -> rx.Component:
     )
 
 
-def _cards(quote) -> rx.Component:
-    """Render the 6 KPI cards."""
+def _cards(price, day_change_pct, market_cap, volume, high_52w, low_52w) -> rx.Component:
     return rx.grid(
-        _kpi_card("Price", f"${quote.price}"),
-        _kpi_card(
-            "Day change",
-            f"{quote.day_change_pct}%",
-            accent="green" if float(quote.day_change_pct) >= 0 else "red",
-        ),
-        _kpi_card("Market cap", _format_market_cap(quote.market_cap)),
-        _kpi_card("Volume", _format_volume(quote.volume)),
-        _kpi_card("52-wk high", f"${quote.fifty_two_week_high}"),
-        _kpi_card("52-wk low", f"${quote.fifty_two_week_low}"),
+        _kpi_card("Price", price),
+        _kpi_card("Day change", f"{day_change_pct}%"),
+        _kpi_card("Market cap", market_cap),
+        _kpi_card("Volume", volume),
+        _kpi_card("52-wk high", high_52w),
+        _kpi_card("52-wk low", low_52w),
         columns="3",
         spacing="3",
         width="100%",
@@ -84,7 +71,6 @@ def _cards(quote) -> rx.Component:
 
 
 def _empty_state() -> rx.Component:
-    """Placeholder when no quote is available."""
     return rx.center(
         rx.text(
             "No data — select a ticker to see the KPIs",
@@ -96,17 +82,47 @@ def _empty_state() -> rx.Component:
     )
 
 
-def kpi_grid(quote) -> rx.Component:
-    """Render a 6-card KPI grid for a quote.
+def _from_quote(q) -> tuple:
+    """Extract field values from an EquityQuote Pydantic model."""
+    return (
+        f"${q.price}",
+        f"{q.day_change_pct}",
+        _format_market_cap(q.market_cap),
+        _format_volume(q.volume),
+        f"${q.fifty_two_week_high}",
+        f"${q.fifty_two_week_low}",
+    )
+
+
+def kpi_grid(
+    quote=None,
+    price: str = "n/a",
+    day_change_pct: str = "n/a",
+    market_cap: str = "n/a",
+    volume: str = "n/a",
+    high_52w: str = "n/a",
+    low_52w: str = "n/a",
+    has_data: bool = False,
+) -> rx.Component:
+    """Render a 6-card KPI grid.
 
     Args:
-        quote: an object with attributes: price, day_change_pct,
-            market_cap, volume, fifty_two_week_high, fifty_two_week_low.
-            Both EquityQuote and CryptoQuote satisfy this.
-
-    Returns:
-        A rx.Component (grid of 6 cards or placeholder).
+        quote: optional Pydantic quote (test path). If passed, its
+            fields override the individual strings.
+        price, day_change_pct, ...: pre-formatted display strings.
+        has_data: True to show the grid, False for placeholder. May be
+            a Var (in which case we use rx.cond).
     """
-    if quote is None:
+    if quote is not None:
+        price, day_change_pct, market_cap, volume, high_52w, low_52w = _from_quote(quote)
+        has_data = True
+    # Detect Var: has_data is a Reflex Var when used in pages
+    if hasattr(has_data, "_var_type") or hasattr(has_data, "length"):
+        return rx.cond(
+            has_data,
+            _cards(price, day_change_pct, market_cap, volume, high_52w, low_52w),
+            _empty_state(),
+        )
+    if not has_data:
         return _empty_state()
-    return _cards(quote)
+    return _cards(price, day_change_pct, market_cap, volume, high_52w, low_52w)

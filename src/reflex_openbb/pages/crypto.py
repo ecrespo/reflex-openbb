@@ -4,10 +4,9 @@ REQ: REQ-006
 
 Composes the crypto chart with CryptoState. Layout:
   1. Symbol input (BTC, ETH, BTC-USD)
-  2. Date range buttons
-  3. Crypto chart
-  4. Stale-data banner (if state.stale_data)
-  5. Loading spinner
+  2. Crypto chart (single time range — 1Y default)
+  3. Stale-data banner (if state.stale_data)
+  4. Loading spinner
 """
 
 from __future__ import annotations
@@ -15,7 +14,6 @@ from __future__ import annotations
 import reflex as rx
 
 from reflex_openbb.components.crypto_chart import crypto_chart
-from reflex_openbb.components.date_range import date_range
 from reflex_openbb.components.export_button import export_button
 from reflex_openbb.state.crypto_state import CryptoState
 
@@ -35,7 +33,7 @@ def _symbol_input() -> rx.Component:
             rx.button("Go", type="submit", size="2"),
             spacing="2",
         ),
-        on_submit=lambda form_data: CryptoState.set_symbol(form_data.get("symbol", "BTC")),
+        on_submit=CryptoState.set_symbol,
         reset_on_submit=False,
     )
 
@@ -77,7 +75,6 @@ def crypto_page() -> rx.Component:
             ),
             _stale_banner(),
             _symbol_input(),
-            date_range(CryptoState),
             _loading_indicator(),
             crypto_chart(CryptoState.price_chart_data),
             spacing="4",

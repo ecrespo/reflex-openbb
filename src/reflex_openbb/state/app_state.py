@@ -40,22 +40,24 @@ class AppState(rx.State):
     #: The most recent search result. None until the first search.
     last_search: SearchResult | None = None
 
-    async def global_search(self, query: str) -> SearchResult:
+    async def global_search(self, form_data: dict) -> None:
         """Run a search and remember the result.
 
         REQ-010: global search bar entry point.
 
-        Args:
-            query: 1..20 chars, atomic symbol (no whitespace).
+        Reflex forms pass the form data as a dict-like var. The form
+        has a single 'query' input, so we extract it from the dict.
+        The result is stored on the state and the page reads
+        `state.last_search` reactively (we don't return anything).
 
-        Returns:
-            SearchResult. equity_match is set for equity hits,
-            crypto_match for crypto hits, both None with confidence=0
-            on no match.
+        Args:
+            form_data: dict with 'query' key (or empty dict if no input).
 
         Raises:
             ValueError: on validation failure (empty, too long, bad chars).
         """
+        query = form_data.get("query", "") if isinstance(form_data, dict) else ""
+        # Validation: search() will raise ValueError for empty/too-long/invalid
+        # queries. We just delegate to it (let exceptions propagate).
         result = await search(query)
         self.last_search = result
-        return result

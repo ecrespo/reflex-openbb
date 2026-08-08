@@ -90,7 +90,7 @@ class TestGetEconomyIndicator:
             },
             schema={"year": pl.Int64, "value": pl.Decimal(precision=18, scale=4)},
         )
-        fake_obb.economy.gdp.return_value = _FakeOBBject(df=df)
+        fake_obb.economy.indicators.return_value = _FakeOBBject(df=df)
 
         points = await economy.get_economy_indicator("GDP", "US")
 
@@ -113,16 +113,21 @@ class TestGetEconomyIndicator:
             {"year": [2024], "value": ["300.0"]},
             schema={"year": pl.Int64, "value": pl.Decimal(precision=18, scale=4)},
         )
-        fake_obb.economy.cpi.return_value = _FakeOBBject(df=df)
+        fake_obb.economy.indicators.return_value = _FakeOBBject(df=df)
 
         await economy.get_economy_indicator("CPI", "US")
 
-        call_kwargs = fake_obb.economy.cpi.call_args.kwargs
+        call_kwargs = fake_obb.economy.indicators.call_args.kwargs
         assert call_kwargs.get("country") == "US"
 
     @pytest.mark.asyncio
     async def test_unrate_routes_to_unrate_endpoint(self, fake_obb: MagicMock) -> None:
-        """REQ: 'UNRATE' indicator calls obb.economy.unrate."""
+        """REQ: 'UNRATE' indicator calls obb.economy.indicators.
+
+        T-006: OpenBB v4 unified the macro endpoints into
+        `obb.economy.indicators(symbol=..., country=...)`. UNRATE is
+        not available in the econdb catalog; we return [] for it.
+        """
         import polars as pl
 
         from reflex_openbb.data import economy
@@ -131,12 +136,14 @@ class TestGetEconomyIndicator:
             {"year": [2024], "value": ["3.7"]},
             schema={"year": pl.Int64, "value": pl.Decimal(precision=18, scale=4)},
         )
-        fake_obb.economy.unrate.return_value = _FakeOBBject(df=df)
+        fake_obb.economy.indicators.return_value = _FakeOBBject(df=df)
 
-        await economy.get_economy_indicator("UNRATE", "US")
+        points = await economy.get_economy_indicator("UNRATE", "US")
 
-        call_kwargs = fake_obb.economy.unrate.call_args.kwargs
-        assert call_kwargs.get("country") == "US"
+        # T-006: UNRATE returns [] because econdb doesn't have it.
+        assert points == []
+        # The SDK should NOT be called for UNRATE (early return).
+        assert fake_obb.economy.indicators.call_count == 0
 
     @pytest.mark.asyncio
     async def test_default_country_is_us(self, fake_obb: MagicMock) -> None:
@@ -149,11 +156,11 @@ class TestGetEconomyIndicator:
             {"year": [2024], "value": ["27.4"]},
             schema={"year": pl.Int64, "value": pl.Decimal(precision=18, scale=4)},
         )
-        fake_obb.economy.gdp.return_value = _FakeOBBject(df=df)
+        fake_obb.economy.indicators.return_value = _FakeOBBject(df=df)
 
         await economy.get_economy_indicator("GDP")
 
-        call_kwargs = fake_obb.economy.gdp.call_args.kwargs
+        call_kwargs = fake_obb.economy.indicators.call_args.kwargs
         assert call_kwargs.get("country") == "US"
 
     @pytest.mark.asyncio
@@ -167,11 +174,11 @@ class TestGetEconomyIndicator:
             {"year": [2024], "value": ["27.4"]},
             schema={"year": pl.Int64, "value": pl.Decimal(precision=18, scale=4)},
         )
-        fake_obb.economy.gdp.return_value = _FakeOBBject(df=df)
+        fake_obb.economy.indicators.return_value = _FakeOBBject(df=df)
 
         await economy.get_economy_indicator("GDP", "us")
 
-        call_kwargs = fake_obb.economy.gdp.call_args.kwargs
+        call_kwargs = fake_obb.economy.indicators.call_args.kwargs
         assert call_kwargs.get("country") == "US"
 
     @pytest.mark.asyncio
@@ -189,7 +196,7 @@ class TestGetEconomyIndicator:
             },
             schema={"year": pl.Int64, "value": pl.Decimal(precision=18, scale=4)},
         )
-        fake_obb.economy.gdp.return_value = _FakeOBBject(df=df)
+        fake_obb.economy.indicators.return_value = _FakeOBBject(df=df)
 
         points = await economy.get_economy_indicator("GDP", "US")
 
@@ -207,13 +214,13 @@ class TestGetEconomyIndicator:
             {"year": [2024], "value": ["27.4"]},
             schema={"year": pl.Int64, "value": pl.Decimal(precision=18, scale=4)},
         )
-        fake_obb.economy.gdp.return_value = _FakeOBBject(df=df)
+        fake_obb.economy.indicators.return_value = _FakeOBBject(df=df)
 
         p1 = await economy.get_economy_indicator("GDP", "US")
         p2 = await economy.get_economy_indicator("GDP", "US")
 
         assert p1 is p2
-        assert fake_obb.economy.gdp.call_count == 1
+        assert fake_obb.economy.indicators.call_count == 1
 
     @pytest.mark.asyncio
     async def test_different_indicators_cached_separately(self, fake_obb: MagicMock) -> None:
@@ -226,14 +233,21 @@ class TestGetEconomyIndicator:
             {"year": [2024], "value": ["27.4"]},
             schema={"year": pl.Int64, "value": pl.Decimal(precision=18, scale=4)},
         )
-        fake_obb.economy.gdp.return_value = _FakeOBBject(df=df)
-        fake_obb.economy.cpi.return_value = _FakeOBBject(df=df)
+        fake_obb.economy.indicators.return_value = _FakeOBBject(df=df)
+        fake_obb.economy.indicators.return_value = _FakeOBBject(df=df)
 
         await economy.get_economy_indicator("GDP", "US")
         await economy.get_economy_indicator("CPI", "US")
 
-        assert fake_obb.economy.gdp.call_count == 1
-        assert fake_obb.economy.cpi.call_count == 1
+        # T-006: OpenBB v4 uses one endpoint with `symbol=` arg, so
+        # each indicator makes a separate SDK call.
+        assert fake_obb.economy.indicators.call_count == 2
+        # Verify both symbols were called
+        symbols_called = [
+            c.kwargs.get("symbol") for c in fake_obb.economy.indicators.call_args_list
+        ]
+        assert "GDP" in symbols_called
+        assert "CPI" in symbols_called
 
     @pytest.mark.asyncio
     async def test_different_countries_cached_separately(self, fake_obb: MagicMock) -> None:
@@ -246,13 +260,13 @@ class TestGetEconomyIndicator:
             {"year": [2024], "value": ["27.4"]},
             schema={"year": pl.Int64, "value": pl.Decimal(precision=18, scale=4)},
         )
-        fake_obb.economy.gdp.return_value = _FakeOBBject(df=df)
+        fake_obb.economy.indicators.return_value = _FakeOBBject(df=df)
 
         await economy.get_economy_indicator("GDP", "US")
         await economy.get_economy_indicator("GDP", "DE")
 
         # Each country triggers a separate SDK call
-        assert fake_obb.economy.gdp.call_count == 2
+        assert fake_obb.economy.indicators.call_count == 2
 
     @pytest.mark.asyncio
     async def test_rejects_invalid_indicator(self) -> None:
@@ -283,7 +297,7 @@ class TestGetEconomyIndicator:
 
         from reflex_openbb.data import economy
 
-        fake_obb.economy.gdp.return_value = _FakeOBBject(df=pl.DataFrame())
+        fake_obb.economy.indicators.return_value = _FakeOBBject(df=pl.DataFrame())
 
         points = await economy.get_economy_indicator("GDP", "US")
         assert points == []
@@ -301,7 +315,7 @@ class TestGetEconomyIndicator:
                 "indicator_value": ["27.4"],  # wrong name
             }
         )
-        fake_obb.economy.gdp.return_value = _FakeOBBject(df=bad_df)
+        fake_obb.economy.indicators.return_value = _FakeOBBject(df=bad_df)
 
         with pytest.raises(data_errors.ProviderError, match="schema validation"):
             await economy.get_economy_indicator("GDP", "US")

@@ -51,8 +51,17 @@ class CryptoState(rx.State):
 
     # ─── Event handlers ──────────────────────────────────────────────
 
-    async def set_symbol(self, symbol: str) -> None:
-        """REQ-006: validate symbol and load its price history."""
+    async def load_initial(self) -> None:
+        """T-007: called by app.add_page(on_load=...) when the page mounts.
+
+        Loads BTC price history so the page isn't empty.
+        """
+        if len(self.price_bars) > 0:
+            return  # already loaded
+        await self._load_bars(self.symbol)
+
+    async def _load_bars(self, symbol: str) -> None:
+        """Shared loading logic for load_initial and set_symbol."""
         self.is_loading = True
         self.error = None
         self.stale_data = False
@@ -67,6 +76,22 @@ class CryptoState(rx.State):
             self.error = str(e)
         finally:
             self.is_loading = False
+
+    async def set_symbol(self, form_data: dict) -> None:
+        """REQ-006: validate symbol and load its price history.
+
+        T-006 update: the form passes a dict (form_data). We extract
+        `symbol` from it. If the key is missing we fall back to "BTC"
+        (the page default). If the value is empty, we let the data
+        layer raise `InvalidTickerError` (validation responsibility
+        lives in the data layer per Constitution Art. 3).
+        """
+        if not isinstance(form_data, dict):
+            raise TypeError(
+                f"set_symbol expects a dict (form_data), got {type(form_data).__name__}"
+            )
+        symbol = form_data.get("symbol", "BTC")
+        await self._load_bars(symbol)
 
     async def export_csv(self) -> None:
         """REQ-008: trigger a CSV download of the current price_bars."""

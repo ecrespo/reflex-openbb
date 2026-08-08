@@ -56,6 +56,15 @@ class EconomyState(rx.State):
 
     # ─── Event handlers ──────────────────────────────────────────────
 
+    async def load_initial(self) -> None:
+        """T-007: called by app.add_page(on_load=...) when the page mounts.
+
+        Loads GDP/US data so the page isn't empty.
+        """
+        if len(self.series) > 0:
+            return  # already loaded
+        await self._load()
+
     async def set_indicator(self, indicator: str) -> None:
         """REQ-007: store the indicator and reload the series.
 
@@ -75,6 +84,10 @@ class EconomyState(rx.State):
         this — we re-raise ValueError for the form to surface).
         """
         normalized = country.upper()
+        if len(normalized) != 2 or not normalized.isalpha():
+            raise ValueError(
+                f"country must be 2-letter ISO-3166 code, got {country!r}"
+            )
         self.country = normalized
         await self._load()
 

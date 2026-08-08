@@ -171,9 +171,11 @@ class TestGetCryptoPriceHistory:
 
         await crypto.get_crypto_price_history("btc")
 
-        # SDK was called with uppercase
+        # T-006: yfinance needs "BTC-USD" for USD-quoted pairs. Our
+        # code adds the "-USD" suffix when the symbol is alphabetic
+        # and has no dash.
         call_kwargs = fake_obb.crypto.price.historical.call_args.kwargs
-        assert call_kwargs.get("symbol") == "BTC"
+        assert call_kwargs.get("symbol") == "BTC-USD"
 
     @pytest.mark.asyncio
     async def test_sorted_ascending_by_date(self, fake_obb: MagicMock) -> None:

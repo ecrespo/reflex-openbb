@@ -136,11 +136,6 @@ class TestEconomyStateFields:
 class TestEventHandlers:
     """REQ-007: set_indicator, set_country, load_indicator."""
 
-    pytestmark = pytest.mark.xfail(
-        reason="rx.State requires app context; validated via `reflex run`",
-        strict=False,
-    )
-
     @pytest.mark.asyncio
     async def test_set_indicator_loads_series(self, mock_data_layer) -> None:
         from reflex_openbb.state.economy_state import EconomyState

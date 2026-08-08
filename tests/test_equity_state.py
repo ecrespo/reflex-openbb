@@ -179,15 +179,9 @@ class TestEquityStateFields:
 class TestSetTicker:
     """REQ-001..005: set_ticker loads all 4 data sources.
 
-    Marked xfail: rx.State requires an app context. The data-layer
-    equivalents in test_data_equity.py cover the same REQs (REQ-001..005)
-    with 100% green. The integration test path is 'reflex run' (T-006).
+    T-006 update: the handler signature is `set_ticker(form_data: dict)`
+    to match how Reflex invokes it from a form. The tests pass dicts.
     """
-
-    pytestmark = pytest.mark.xfail(
-        reason="rx.State requires app context; data-layer tests cover REQ-001..005",
-        strict=False,
-    )
 
     @pytest.mark.asyncio
     async def test_set_ticker_loads_quote(self, mock_data_layer) -> None:
@@ -211,7 +205,7 @@ class TestSetTicker:
             provider="yfinance",
         )
 
-        await state.set_ticker("MSFT")
+        await state.set_ticker({"ticker": "MSFT"})
 
         assert state.quote is not None
         assert state.quote.ticker == "MSFT"
@@ -222,7 +216,7 @@ class TestSetTicker:
         from reflex_openbb.state.equity_state import EquityState
 
         state = EquityState()
-        await state.set_ticker("msft")
+        await state.set_ticker({"ticker": "msft"})
 
         assert state.ticker == "MSFT"
 
@@ -234,7 +228,7 @@ class TestSetTicker:
         custom_bars = _make_bars()
         mock_data_layer["bars"].return_value = custom_bars
 
-        await state.set_ticker("AAPL")
+        await state.set_ticker({"ticker": "AAPL"})
 
         assert state.price_bars == custom_bars
 
@@ -259,7 +253,7 @@ class TestSetTicker:
             provider="yfinance",
         )
 
-        await state.set_ticker("AAPL")
+        await state.set_ticker({"ticker": "AAPL"})
 
         assert state.fundamentals is not None
         assert state.fundamentals.ticker == "AAPL"
@@ -282,7 +276,7 @@ class TestSetTicker:
             )
         ]
 
-        await state.set_ticker("AAPL")
+        await state.set_ticker({"ticker": "AAPL"})
 
         assert len(state.news) == 1
 
@@ -295,7 +289,7 @@ class TestSetTicker:
         state = EquityState()
         mock_data_layer["quote"].side_effect = ProviderError("yfinance", 500, None, "boom")
 
-        await state.set_ticker("AAPL")
+        await state.set_ticker({"ticker": "AAPL"})
 
         assert state.stale_data is True
         assert "boom" in (state.error or "")
@@ -327,7 +321,7 @@ class TestSetTicker:
 
         mock_data_layer["quote"].side_effect = fake_quote
 
-        await state.set_ticker("AAPL")
+        await state.set_ticker({"ticker": "AAPL"})
 
         assert captured["loading_during"] is True
         assert state.is_loading is False  # reset after the call
@@ -340,22 +334,14 @@ class TestSetTicker:
 
         state = EquityState()
         with pytest.raises(InvalidTickerError):
-            await state.set_ticker("AA!PL")
+            await state.set_ticker({"ticker": "AA!PL"})
 
 
 # ─── EquityState.set_period ────────────────────────────────────────────────
 
 
 class TestSetPeriod:
-    """REQ-002: date range change reloads price history.
-
-    Marked xfail: same rationale as TestSetTicker.
-    """
-
-    pytestmark = pytest.mark.xfail(
-        reason="rx.State requires app context; data-layer tests cover REQ-002",
-        strict=False,
-    )
+    """REQ-002: date range change reloads price history."""
 
     @pytest.mark.asyncio
     async def test_set_period_changes_period_field(self) -> None:

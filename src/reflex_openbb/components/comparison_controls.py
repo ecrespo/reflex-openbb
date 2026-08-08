@@ -57,7 +57,7 @@ def comparison_controls() -> rx.Component:
                 ),
                 spacing="2",
             ),
-            on_submit=lambda form_data: EquityState.add_to_comparison(form_data.get("ticker", "")),
+            on_submit=EquityState.add_to_comparison,
             reset_on_submit=True,
         ),
         _added_chips(),

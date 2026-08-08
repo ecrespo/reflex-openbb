@@ -55,6 +55,24 @@ class OHLCSchema(pa.DataFrameModel):
         coerce = True  # coerce string → Decimal, etc.
 
 
+class MacroSchema(pa.DataFrameModel):
+    """Schema for macro indicator DataFrames (GDP, CPI, UNRATE).
+
+    Used by data.economy.get_economy_indicator.
+
+    The SDK returns a DataFrame with `year` and `value` columns
+    (one row per year of data). The `country` and `indicator` are
+    passed as arguments to the SDK call, so they don't appear in
+    the DataFrame — they're added to each MacroPoint by the converter.
+    """
+
+    year: int = pa.Field(ge=1900, le=2200)
+    value: pl.Decimal(precision=18, scale=4)
+
+    class Config:
+        coerce = True
+
+
 # ─── Converters ─────────────────────────────────────────────────────────────
 
 
@@ -81,7 +99,7 @@ def ohlc_bars_from_dataframe(df: pl.DataFrame) -> list[OHLCBar]:
             retry_after=None,
             original=f"OHLC data failed schema validation: {e}",
         ) from e
-    except pl.ColumnNotFoundError as e:
+    except pl.exceptions.ColumnNotFoundError as e:
         raise ProviderError(
             provider="unknown",
             status_code=None,
@@ -112,4 +130,54 @@ def ohlc_bars_from_dataframe(df: pl.DataFrame) -> list[OHLCBar]:
     return bars
 
 
-__all__ = ["OHLCSchema", "ohlc_bars_from_dataframe"]
+def macro_points_from_dataframe(
+    df: pl.DataFrame, *, country: str, indicator: str
+) -> list[MacroPoint]:
+    """Validate `df` against MacroSchema and convert to a sorted list of MacroPoint.
+
+    REQ: REQ-007 + data-model §MacroPoint.
+    Returns a list sorted ascending by year.
+
+    The `country` and `indicator` are passed in by the caller (they were
+    arguments to the SDK call, not columns in the DataFrame). They're
+    added to each MacroPoint.
+
+    Raises:
+        ProviderError: if the DataFrame fails schema validation.
+    """
+    from reflex_openbb.data.types import MacroPoint  # avoid circular import
+
+    # 1. Validate schema. Catch BOTH pandera errors and polars'
+    #    ColumnNotFoundError.
+    try:
+        validated = MacroSchema.validate(df, lazy=True)
+    except (SchemaError, SchemaErrors) as e:
+        raise ProviderError(
+            provider="unknown",
+            status_code=None,
+            retry_after=None,
+            original=f"Macro data failed schema validation: {e}",
+        ) from e
+    except pl.exceptions.ColumnNotFoundError as e:
+        raise ProviderError(
+            provider="unknown",
+            status_code=None,
+            retry_after=None,
+            original=f"Macro data failed schema validation: missing column: {e}",
+        ) from e
+
+    # 2. Sort by year ascending and convert to MacroPoint.
+    sorted_df = validated.sort("year")
+
+    return [
+        MacroPoint(
+            year=int(row["year"]),
+            value=row["value"],
+            country=country,
+            indicator=indicator,
+        )
+        for row in sorted_df.iter_rows(named=True)
+    ]
+
+
+__all__ = ["MacroSchema", "OHLCSchema", "macro_points_from_dataframe", "ohlc_bars_from_dataframe"]

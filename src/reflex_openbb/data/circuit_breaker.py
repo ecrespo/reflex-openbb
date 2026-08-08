@@ -66,12 +66,9 @@ class CircuitBreaker:
         If it fails, the breaker re-opens (record_failure).
         """
         open_until = self._open_until.get(provider, 0.0)
-        if open_until <= time.monotonic():
-            # Reset timeout elapsed — half-open.
-            # We DON'T clear the failure count here; the next call's
-            # outcome will determine whether to reset it.
-            return False
-        return True
+        # The breaker is OPEN if the open_until timestamp is still in the
+        # future. If elapsed (or never set), it's closed/half-open.
+        return open_until > time.monotonic()
 
     def time_until_retry(self, provider: str) -> float:
         """Seconds until `provider`'s breaker tries again. 0 if closed."""

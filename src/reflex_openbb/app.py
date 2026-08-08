@@ -1,6 +1,6 @@
 """The Reflex app entry point.
 
-T-005 + T-307: minimal app with home + equity routes.
+T-005 + T-307 + T-403 + T-408: app with home + equity + crypto + economy.
 
 Usage:
     uv run reflex-openbb           # uses `main()` as the console script
@@ -11,7 +11,7 @@ The console script declared in pyproject.toml points to `main()`.
 
 import reflex as rx
 
-from reflex_openbb.pages import equity, home
+from reflex_openbb.pages import crypto, economy, equity, home
 
 
 def index() -> rx.Component:
@@ -24,17 +24,32 @@ def index() -> rx.Component:
 
 
 def equity_route() -> rx.Component:
-    """The /equity/[ticker] page (T-307)."""
+    """The /equity/[symbol] page (T-307)."""
     return equity.equity_page()
+
+
+def crypto_route() -> rx.Component:
+    """The /crypto/[symbol] page (T-403)."""
+    return crypto.crypto_page()
+
+
+def economy_route() -> rx.Component:
+    """The /economy page (T-408)."""
+    return economy.economy_page()
 
 
 # Build the app. The `app` is a module-level `rx.App` so that `reflex run`
 # (which introspects the module to find an `app` symbol) can find it.
 app = rx.App()
 app.add_page(index, route="/")
-# The route param is `[symbol]` to avoid shadowing EquityState.ticker
-# (reflex raises DynamicRouteArgShadowsStateVarError otherwise).
-app.add_page(equity_route, route="/equity/[symbol]")
+# /equity, /crypto, /economy — static routes (no dynamic route args).
+# Reflex dynamic route args (e.g. /equity/[ticker]) conflict with state
+# vars of the same name in other states (EquityState.ticker, CryptoState.symbol).
+# We use a single static route per page and pass the ticker via URL query
+# params (or via the ticker input form on the page itself).
+app.add_page(equity_route, route="/equity")
+app.add_page(crypto_route, route="/crypto")
+app.add_page(economy_route, route="/economy")
 
 
 def main() -> None:

@@ -1,0 +1,67 @@
+[project]
+name = "reflex-openbb"
+version = "0.1.0"
+description = "Open-source OpenBB UI in pure Python (Reflex). Equity/Crypto/Economy dashboards consuming the openbb SDK."
+authors = [
+    { name = "Ernesto Crespo", email = "ecrespo@gmail.com" }
+]
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+keywords = [
+    "reflex",
+    "reflex-custom-components",
+    "openbb",
+    "finance",
+    "stocks",
+    "crypto",
+    "dashboard",
+    "financial-data",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Framework :: AsyncIO",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Office/Business :: Financial",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = [
+    "reflex>=0.8,<0.9",
+    "openbb>=4.0,<5.0",
+    "cachetools>=5.0",
+    "pydantic>=2.0",
+]
+
+[project.scripts]
+reflex-openbb = "reflex_openbb.app:main"
+
+[project.urls]
+Homepage = "https://github.com/ecrespo/reflex-openbb"
+Repository = "https://github.com/ecrespo/reflex-openbb"
+Issues = "https://github.com/ecrespo/reflex-openbb/issues"
+"openbb" = "https://github.com/OpenBB-finance/OpenBB"
+
+[build-system]
+requires = ["uv_build>=0.11.8,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=4.0",
+    "ruff>=0.4",
+    "bandit>=1.7",
+    "pre-commit>=3.7",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"

@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+
+# uv
+.venv/
+.python-version
+
+# Build
+build/
+dist/
+*.whl
+
+# Tests
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Reflex
+.reflex/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+.DS_Store

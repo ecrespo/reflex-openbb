@@ -32,6 +32,8 @@ dependencies = [
     "openbb>=4.0,<5.0",
     "cachetools>=5.0",
     "pydantic>=2.0",
+    "polars>=0.20",
+    "pandera>=0.18",
 ]
 
 [project.scripts]
@@ -55,7 +57,6 @@ dev = [
     "ruff>=0.4",
     "bandit>=1.7",
     "pre-commit>=3.7",
-    "pandas>=2.3.3",
 ]
 
 [tool.pytest.ini_options]

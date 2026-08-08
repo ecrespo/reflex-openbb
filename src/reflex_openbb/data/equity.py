@@ -24,7 +24,9 @@ import re
 from datetime import date, datetime, timezone
 from typing import Literal
 
-import pandas as pd
+import pandera.polars as pa
+import polars as pl
+from pandera.errors import SchemaError, SchemaErrors
 
 from reflex_openbb.data.cache import CacheName, get_or_compute
 from reflex_openbb.data.errors import InvalidTickerError, ProviderError
@@ -34,6 +36,35 @@ from reflex_openbb.data.types import (
     NewsItem,
     OHLCBar,
 )
+
+# ─── Pandera schema for OHLC data ──────────────────────────────────────────
+
+
+class OHLCSchema(pa.DataFrameModel):
+    """Schema for the price history DataFrame returned by the OpenBB SDK.
+
+    REQ: defensive validation at the data-layer boundary. If the provider
+    changes its schema (column names, types, NULLability), we want to fail
+    loudly here, NOT corrupt downstream state.
+
+    The schema is intentionally strict: every column is required, types
+    are explicit (with Decimal precision=18 scale=4 to preserve price
+    precision), and we check that `volume >= 0`.
+    """
+
+    # NOTE: in pandera.polars, precision/scale for Decimal columns are
+    # defined on the polars type itself (`pl.Decimal(precision, scale)`),
+    # not on `pa.Field`. The `ge=0` check on volume is a built-in.
+    date: pl.Date
+    open: pl.Decimal(precision=18, scale=4)
+    high: pl.Decimal(precision=18, scale=4)
+    low: pl.Decimal(precision=18, scale=4)
+    close: pl.Decimal(precision=18, scale=4)
+    volume: int = pa.Field(ge=0)
+
+    class Config:
+        coerce = True  # coerce string → Decimal, etc.
+
 
 # ─── Ticker validation ──────────────────────────────────────────────────────
 
@@ -82,20 +113,47 @@ def _to_equity_quote(result: dict) -> EquityQuote:
     )
 
 
-def _to_ohlc_bars(df: pd.DataFrame) -> list[OHLCBar]:
-    """Build a list of OHLCBar from a DataFrame.
+def _to_ohlc_bars(df: pl.DataFrame) -> list[OHLCBar]:
+    """Build a list of OHLCBar from a polars DataFrame.
 
     REQ: REQ-001, REQ-002 + data-model §OHLCBar.
     Returns a list sorted ascending by date.
+
+    The input DataFrame is validated against `OHLCSchema` first. This
+    catches provider-schema drift (missing columns, wrong types) at the
+    boundary instead of letting it corrupt downstream state.
     """
+    # 1. Validate schema. If it doesn't match, raise ProviderError.
+    #    We catch BOTH pandera's SchemaError/SchemaErrors AND polars'
+    #    ColumnNotFoundError — the latter happens when the provider
+    #    drops/renames a column, which pandera doesn't wrap.
+    try:
+        validated = OHLCSchema.validate(df, lazy=True)
+    except (SchemaError, SchemaErrors) as e:
+        raise ProviderError(
+            provider="unknown",
+            status_code=None,
+            retry_after=None,
+            original=f"OHLC data failed schema validation: {e}",
+        ) from e
+    except pl.ColumnNotFoundError as e:
+        raise ProviderError(
+            provider="unknown",
+            status_code=None,
+            retry_after=None,
+            original=f"OHLC data failed schema validation: missing column: {e}",
+        ) from e
+
+    # 2. Convert to a sorted list of OHLCBar.
+    # Polars sort is in-place; we sort by date ascending.
+    sorted_df = validated.sort("date")
+
     bars: list[OHLCBar] = []
-    for _, row in df.iterrows():
-        # Date parsing: OpenBB may return a string or a date
+    for row in sorted_df.iter_rows(named=True):
         d = row["date"]
+        # `pl.Date` always returns a `date` object, but be defensive.
         if isinstance(d, str):
             d = date.fromisoformat(d)
-        elif isinstance(d, pd.Timestamp):
-            d = d.date()
 
         bars.append(
             OHLCBar(
@@ -107,8 +165,6 @@ def _to_ohlc_bars(df: pd.DataFrame) -> list[OHLCBar]:
                 volume=int(row["volume"]),
             )
         )
-    # Sort ascending by date (data-model requirement)
-    bars.sort(key=lambda b: b.date)
     return bars
 
 
@@ -227,7 +283,7 @@ async def get_equity_price_history(
             ) from e
 
         df = obb_obj.to_dataframe()
-        if df is None or df.empty:
+        if df is None or df.is_empty():
             raise ProviderError(
                 provider="unknown",
                 status_code=None,

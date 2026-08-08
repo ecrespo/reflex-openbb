@@ -22,6 +22,7 @@ fixture so no real network is hit.
 
 from __future__ import annotations
 
+from datetime import date
 from decimal import Decimal
 from unittest.mock import MagicMock
 
@@ -34,7 +35,11 @@ from reflex_openbb.data import types as data_types
 
 
 class _FakeOBBject:
-    """Mimics the OpenBB SDK's OBBject: has a `results` attribute and `.to_dataframe()`."""
+    """Mimics the OpenBB SDK's OBBject: has a `results` attribute and `.to_dataframe()`.
+
+    The real OBBject's `to_dataframe()` returns a polars DataFrame (since
+    OpenBB 4.x). Our mock does the same.
+    """
 
     def __init__(self, results: list | None = None, df=None) -> None:
         # Attribute is `results` (public), not `_results`, to match the real OBBject.
@@ -250,19 +255,29 @@ class TestGetEquityPriceHistory:
 
     @pytest.mark.asyncio
     async def test_returns_list_of_ohlc_bars(self, fake_obb: MagicMock) -> None:
-        import pandas as pd
+        import polars as pl
 
         from reflex_openbb.data import equity
 
-        df = pd.DataFrame(
+        # Build a polars DataFrame with the EXACT schema the data layer
+        # expects (Decimal(precision=18, scale=4) + pl.Date + Int64).
+        df = pl.DataFrame(
             {
-                "date": ["2024-01-15", "2024-01-16", "2024-01-17"],
-                "open": [150.0, 151.0, 152.0],
-                "high": [152.0, 153.0, 154.0],
-                "low": [149.5, 150.5, 151.5],
-                "close": [151.25, 152.50, 153.75],
+                "date": [date(2024, 1, 15), date(2024, 1, 16), date(2024, 1, 17)],
+                "open": ["150.00", "151.00", "152.00"],
+                "high": ["152.00", "153.00", "154.00"],
+                "low": ["149.50", "150.50", "151.50"],
+                "close": ["151.25", "152.50", "153.75"],
                 "volume": [10_000_000, 11_000_000, 12_000_000],
-            }
+            },
+            schema={
+                "date": pl.Date,
+                "open": pl.Decimal(precision=18, scale=4),
+                "high": pl.Decimal(precision=18, scale=4),
+                "low": pl.Decimal(precision=18, scale=4),
+                "close": pl.Decimal(precision=18, scale=4),
+                "volume": pl.Int64,
+            },
         )
         fake_obb.equity.price.historical.return_value = _FakeOBBject(df=df)
 
@@ -279,19 +294,27 @@ class TestGetEquityPriceHistory:
     @pytest.mark.asyncio
     async def test_default_period_is_1y(self, fake_obb: MagicMock) -> None:
         """REQ: api/v1.md — default period='1y'."""
-        import pandas as pd
+        import polars as pl
 
         from reflex_openbb.data import equity
 
-        df = pd.DataFrame(
+        df = pl.DataFrame(
             {
                 "date": ["2024-01-15"],
-                "open": [150.0],
-                "high": [152.0],
-                "low": [149.5],
-                "close": [151.0],
+                "open": ["150.00"],
+                "high": ["152.00"],
+                "low": ["149.50"],
+                "close": ["151.00"],
                 "volume": [10_000_000],
-            }
+            },
+            schema={
+                "date": pl.Date,
+                "open": pl.Decimal(precision=18, scale=4),
+                "high": pl.Decimal(precision=18, scale=4),
+                "low": pl.Decimal(precision=18, scale=4),
+                "close": pl.Decimal(precision=18, scale=4),
+                "volume": pl.Int64,
+            },
         )
         fake_obb.equity.price.historical.return_value = _FakeOBBject(df=df)
 
@@ -304,20 +327,28 @@ class TestGetEquityPriceHistory:
     @pytest.mark.asyncio
     async def test_sorted_ascending_by_date(self, fake_obb: MagicMock) -> None:
         """REQ: data-model — list is sorted ascending by date."""
-        import pandas as pd
+        import polars as pl
 
         from reflex_openbb.data import equity
 
         # DataFrame in DESCENDING order — our code should sort it
-        df = pd.DataFrame(
+        df = pl.DataFrame(
             {
                 "date": ["2024-01-17", "2024-01-15", "2024-01-16"],
-                "open": [152.0, 150.0, 151.0],
-                "high": [154.0, 152.0, 153.0],
-                "low": [151.5, 149.5, 150.5],
-                "close": [153.75, 151.25, 152.50],
+                "open": ["152.00", "150.00", "151.00"],
+                "high": ["154.00", "152.00", "153.00"],
+                "low": ["151.50", "149.50", "150.50"],
+                "close": ["153.75", "151.25", "152.50"],
                 "volume": [12_000_000, 10_000_000, 11_000_000],
-            }
+            },
+            schema={
+                "date": pl.Date,
+                "open": pl.Decimal(precision=18, scale=4),
+                "high": pl.Decimal(precision=18, scale=4),
+                "low": pl.Decimal(precision=18, scale=4),
+                "close": pl.Decimal(precision=18, scale=4),
+                "volume": pl.Int64,
+            },
         )
         fake_obb.equity.price.historical.return_value = _FakeOBBject(df=df)
 
@@ -328,13 +359,73 @@ class TestGetEquityPriceHistory:
 
     @pytest.mark.asyncio
     async def test_empty_dataframe_raises_provider_error(self, fake_obb: MagicMock) -> None:
-        import pandas as pd
+        import polars as pl
 
         from reflex_openbb.data import equity
 
-        fake_obb.equity.price.historical.return_value = _FakeOBBject(df=pd.DataFrame())
+        fake_obb.equity.price.historical.return_value = _FakeOBBject(df=pl.DataFrame())
 
         with pytest.raises(data_errors.ProviderError):
+            await equity.get_equity_price_history("AAPL", "1mo")
+
+    @pytest.mark.asyncio
+    async def test_schema_mismatch_raises_provider_error(self, fake_obb: MagicMock) -> None:
+        """If the SDK returns a wrong column, pandera catches it.
+
+        REQ: defensive validation at the data-layer boundary.
+
+        We use a missing column (not a wrong type) because with `coerce=True`
+        pandera happily converts int→Decimal and str→Date, so the most
+        realistic schema break is "the provider dropped/renamed a column".
+        """
+        import polars as pl
+
+        from reflex_openbb.data import equity
+
+        # DataFrame with a column renamed — 'closing_price' instead of 'close'
+        bad_df = pl.DataFrame(
+            {
+                "date": ["2024-01-15"],
+                "open": ["150.00"],
+                "high": ["152.00"],
+                "low": ["149.50"],
+                "closing_price": ["151.00"],  # wrong name!
+                "volume": [10_000_000],
+            }
+        )
+        fake_obb.equity.price.historical.return_value = _FakeOBBject(df=bad_df)
+
+        with pytest.raises(data_errors.ProviderError, match="schema validation"):
+            await equity.get_equity_price_history("AAPL", "1mo")
+
+    @pytest.mark.asyncio
+    async def test_negative_volume_raises_provider_error(self, fake_obb: MagicMock) -> None:
+        """Pandera ge=0 check catches negative volume."""
+        import polars as pl
+
+        from reflex_openbb.data import equity
+
+        df = pl.DataFrame(
+            {
+                "date": ["2024-01-15"],
+                "open": ["150.00"],
+                "high": ["152.00"],
+                "low": ["149.50"],
+                "close": ["151.00"],
+                "volume": [-1],  # negative!
+            },
+            schema={
+                "date": pl.Date,
+                "open": pl.Decimal(precision=18, scale=4),
+                "high": pl.Decimal(precision=18, scale=4),
+                "low": pl.Decimal(precision=18, scale=4),
+                "close": pl.Decimal(precision=18, scale=4),
+                "volume": pl.Int64,
+            },
+        )
+        fake_obb.equity.price.historical.return_value = _FakeOBBject(df=df)
+
+        with pytest.raises(data_errors.ProviderError, match="schema validation"):
             await equity.get_equity_price_history("AAPL", "1mo")
 
     @pytest.mark.asyncio

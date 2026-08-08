@@ -22,6 +22,9 @@ def search_box() -> rx.Component:
     Returns:
         A rx.Component (form with input + button).
     """
+    # Use rx.input's value binding via a local var. Reflex forms pass
+    # the form values as a dict-like var. We use [] indexing (not .get)
+    # because reflex form_data is an UntypedVar and .get() is unsupported.
     return rx.form(
         rx.hstack(
             rx.input(
@@ -37,6 +40,6 @@ def search_box() -> rx.Component:
             ),
             spacing="2",
         ),
-        on_submit=lambda form_data: AppState.global_search(form_data.get("query", "")),
+        on_submit=AppState.global_search,
         reset_on_submit=True,
     )

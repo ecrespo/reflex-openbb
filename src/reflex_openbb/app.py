@@ -12,6 +12,9 @@ The console script declared in pyproject.toml points to `main()`.
 import reflex as rx
 
 from reflex_openbb.pages import crypto, economy, equity, home
+from reflex_openbb.state.crypto_state import CryptoState
+from reflex_openbb.state.economy_state import EconomyState
+from reflex_openbb.state.equity_state import EquityState
 
 
 def index() -> rx.Component:
@@ -47,9 +50,9 @@ app.add_page(index, route="/")
 # vars of the same name in other states (EquityState.ticker, CryptoState.symbol).
 # We use a single static route per page and pass the ticker via URL query
 # params (or via the ticker input form on the page itself).
-app.add_page(equity_route, route="/equity")
-app.add_page(crypto_route, route="/crypto")
-app.add_page(economy_route, route="/economy")
+app.add_page(equity_route, route="/equity", on_load=EquityState.load_initial)
+app.add_page(crypto_route, route="/crypto", on_load=CryptoState.load_initial)
+app.add_page(economy_route, route="/economy", on_load=EconomyState.load_initial)
 
 
 def main() -> None:

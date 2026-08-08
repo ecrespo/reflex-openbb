@@ -24,7 +24,7 @@ def export_button(state) -> rx.Component:
     return rx.button(
         rx.icon("download", size=18),
         rx.text("Export CSV"),
-        on_click=state.export_csv,
+        on_click=lambda: state.export_csv(),
         size="2",
         variant="outline",
     )

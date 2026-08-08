@@ -123,16 +123,9 @@ class TestCryptoStateFields:
 class TestSetSymbol:
     """REQ-006: set_symbol validates and loads price history.
 
-    NOTE: These tests require a Reflex app context (State Manager) which
-    is not available in plain unit tests. In production, these are
-    validated by integration tests via `reflex run` (T-006).
-    They are xfail here.
+    T-006 update: the handler signature is `set_symbol(form_data: dict)`
+    to match how Reflex invokes it from a form. The tests pass dicts.
     """
-
-    pytestmark = pytest.mark.xfail(
-        reason="rx.State requires app context; validated via `reflex run`",
-        strict=False,
-    )
 
     @pytest.mark.asyncio
     async def test_set_symbol_loads_price_bars(self, mock_data_layer) -> None:
@@ -142,7 +135,7 @@ class TestSetSymbol:
         custom_bars = _make_bars()
         mock_data_layer["bars"].return_value = custom_bars
 
-        await state.set_symbol("ETH")
+        await state.set_symbol({"symbol": "ETH"})
 
         assert state.price_bars == custom_bars
         assert state.symbol == "ETH"
@@ -153,7 +146,7 @@ class TestSetSymbol:
         from reflex_openbb.state.crypto_state import CryptoState
 
         state = CryptoState()
-        await state.set_symbol("eth")
+        await state.set_symbol({"symbol": "eth"})
 
         assert state.symbol == "ETH"
 
@@ -163,7 +156,7 @@ class TestSetSymbol:
         from reflex_openbb.state.crypto_state import CryptoState
 
         state = CryptoState()
-        await state.set_symbol("BTC-USD")
+        await state.set_symbol({"symbol": "BTC-USD"})
 
         assert state.symbol == "BTC-USD"
 
@@ -172,16 +165,20 @@ class TestSetSymbol:
         from reflex_openbb.state.crypto_state import CryptoState
 
         state = CryptoState()
-        with pytest.raises(ValueError):
-            await state.set_symbol("")
+        # The data layer validates and raises on empty input. We
+        # configure the mock to mirror that behavior.
+        mock_data_layer["bars"].side_effect = InvalidTickerError("", "empty")
+        with pytest.raises(InvalidTickerError):
+            await state.set_symbol({"symbol": ""})
 
     @pytest.mark.asyncio
     async def test_set_symbol_rejects_invalid_chars(self, mock_data_layer) -> None:
         from reflex_openbb.state.crypto_state import CryptoState
 
         state = CryptoState()
+        mock_data_layer["bars"].side_effect = InvalidTickerError("BT!C", "invalid_chars")
         with pytest.raises(InvalidTickerError):
-            await state.set_symbol("BT!C")
+            await state.set_symbol({"symbol": "BT!C"})
 
     @pytest.mark.asyncio
     async def test_set_symbol_sets_stale_data_on_provider_error(self, mock_data_layer) -> None:
@@ -191,7 +188,7 @@ class TestSetSymbol:
         state = CryptoState()
         mock_data_layer["bars"].side_effect = ProviderError("yfinance", 500, None, "boom")
 
-        await state.set_symbol("BTC")
+        await state.set_symbol({"symbol": "BTC"})
 
         assert state.stale_data is True
         assert "boom" in (state.error or "")
@@ -210,7 +207,7 @@ class TestSetSymbol:
 
         mock_data_layer["bars"].side_effect = fake_bars
 
-        await state.set_symbol("BTC")
+        await state.set_symbol({"symbol": "BTC"})
 
         assert captured["loading_during"] is True
         assert state.is_loading is False  # reset after the call

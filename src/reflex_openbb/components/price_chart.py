@@ -1,15 +1,11 @@
 """price_chart component (T-301).
 
-REQ: REQ-001, REQ-002
+REQ: REQ-001, REQ-009
 
-Renders an equity/crypto price chart using rx.recharts.LineChart.
-
-The component takes a list[dict] (the chart-ready output of
-state.price_chart_data) and an optional list[dict] for comparison
-(REQ-009 — multi-ticker overlay).
-
-If bars is empty, shows a placeholder (REQ-001 O-where: "the system
-shall display a placeholder chart if no data is available").
+Renders a price LineChart with optional comparison overlay.
+Accepts either a plain Python list (for unit tests) or a Reflex Var
+list[dict] (for the page). Uses is_var detection to pick the right
+API.
 """
 
 from __future__ import annotations
@@ -19,11 +15,16 @@ import reflex as rx
 __all__ = ["price_chart"]
 
 
+def _is_var(obj) -> bool:
+    """True if obj is a Reflex Var (not a plain Python value)."""
+    return hasattr(obj, "_var_type") or hasattr(obj, "length")
+
+
 def _empty_state() -> rx.Component:
     """Placeholder when no price data is available."""
     return rx.center(
         rx.vstack(
-            rx.icon("line-chart", size=48, color="gray.500"),
+            rx.icon("line-chart", size=48, color="blue.500"),
             rx.text("No price data", color="gray.500", size="4"),
             rx.text(
                 "Select a ticker to see the price chart",
@@ -38,69 +39,93 @@ def _empty_state() -> rx.Component:
     )
 
 
-def _chart(bars: list[dict], comparison: list[dict]) -> rx.Component:
-    """The actual line chart with the data.
+def _chart(bars, comparison) -> rx.Component:
+    """The actual line chart with optional comparison overlay.
 
-    For the main series, we use the bars as-is. For comparison (REQ-009),
-    we add a second <Line> with a different stroke style. Note: with the
-    current recharts integration, the comparison data is encoded in the
-    same `data` array — its values appear in the rendered output.
+    `comparison` may be a list (test) or a Var (production).
     """
-    # When comparison is provided, include it in the data so recharts
-    # has both series to render.
-    chart_data = bars
-    if comparison:
-        # Merge: for each main bar, append the matching comparison close.
-        # recharts requires the data to be a flat list of dicts.
-        # We tag the main as `close` and comparison as `close_compare`.
-        merged: list[dict] = []
-        comp_by_date = {c["date"]: c["close"] for c in comparison}
-        for b in bars:
-            row = {**b}
-            if b["date"] in comp_by_date:
-                row["close_compare"] = comp_by_date[b["date"]]
-            merged.append(row)
-        chart_data = merged
-
-    children: list[rx.Component] = [
-        rx.recharts.line(
-            data_key="close",
-            stroke="#3b82f6",  # blue
-            dot=False,
-            stroke_width=2,
+    if _is_var(comparison):
+        return rx.cond(
+            comparison.length() > 0,
+            rx.recharts.line_chart(
+                rx.recharts.line(
+                    data_key="close",
+                    stroke="#3b82f6",
+                    dot=False,
+                    stroke_width=2,
+                ),
+                rx.recharts.line(
+                    data_key="close_compare",
+                    stroke="#f97316",
+                    dot=False,
+                    stroke_width=2,
+                    stroke_dasharray="5 5",
+                ),
+                data=bars,
+                height=400,
+                margin={"top": 20, "right": 20, "left": 20, "bottom": 20},
+            ),
+            rx.recharts.line_chart(
+                rx.recharts.line(
+                    data_key="close",
+                    stroke="#3b82f6",
+                    dot=False,
+                    stroke_width=2,
+                ),
+                data=bars,
+                height=400,
+                margin={"top": 20, "right": 20, "left": 20, "bottom": 20},
+            ),
         )
-    ]
+    # Plain Python comparison
     if comparison:
-        children.append(
+        return rx.recharts.line_chart(
+            rx.recharts.line(
+                data_key="close",
+                stroke="#3b82f6",
+                dot=False,
+                stroke_width=2,
+            ),
             rx.recharts.line(
                 data_key="close_compare",
-                stroke="#ef4444",  # red
+                stroke="#f97316",
                 dot=False,
                 stroke_width=2,
                 stroke_dasharray="5 5",
-            )
+            ),
+            data=bars,
+            height=400,
+            margin={"top": 20, "right": 20, "left": 20, "bottom": 20},
         )
-
     return rx.recharts.line_chart(
-        *children,
-        data=chart_data,
+        rx.recharts.line(
+            data_key="close",
+            stroke="#3b82f6",
+            dot=False,
+            stroke_width=2,
+        ),
+        data=bars,
         height=400,
         margin={"top": 20, "right": 20, "left": 20, "bottom": 20},
     )
 
 
-def price_chart(bars: list[dict], comparison: list[dict] | None = None) -> rx.Component:
-    """Render a price chart with optional comparison overlay.
+def price_chart(bars, comparison=None) -> rx.Component:
+    """Render a price chart.
 
     Args:
-        bars: list of price bars as dicts (from state.price_chart_data).
-            Each dict has keys: date, open, high, low, close, volume.
-        comparison: optional list of comparison series dicts (REQ-009).
-            Each dict has the same shape as a `bars` entry.
-
-    Returns:
-        A rx.Component (LineChart or placeholder).
+        bars: list of price bars (dict, Pydantic, or Var).
+        comparison: optional list of comparison bars (for REQ-009).
     """
+    if comparison is None:
+        comparison = []
+    if _is_var(bars):
+        return rx.cond(
+            bars.length() > 0,
+            _chart(bars, comparison),
+            _empty_state(),
+        )
+    # Plain Python list (test path)
     if not bars:
         return _empty_state()
-    return _chart(bars, comparison or [])
+    return _chart(bars, comparison)

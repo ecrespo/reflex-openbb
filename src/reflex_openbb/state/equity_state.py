@@ -107,10 +107,159 @@ class EquityState(rx.State):
                 )
         return rows
 
+    @rx.var
+    def market_cap_display(self) -> str:
+        """Display-friendly market cap (e.g. '$2.50T')."""
+        if self.quote is None:
+            return "n/a"
+        v = float(self.quote.market_cap)
+        if v >= 1_000_000_000_000:
+            return f"${v / 1_000_000_000_000:.2f}T"
+        if v >= 1_000_000_000:
+            return f"${v / 1_000_000_000:.2f}B"
+        if v >= 1_000_000:
+            return f"${v / 1_000_000:.2f}M"
+        return f"${v:,.0f}"
+
+    @rx.var
+    def volume_display(self) -> str:
+        """Display-friendly volume (e.g. '10.50M')."""
+        if self.quote is None:
+            return "n/a"
+        v = float(self.quote.volume)
+        if v >= 1_000_000_000:
+            return f"{v / 1_000_000_000:.2f}B"
+        if v >= 1_000_000:
+            return f"{v / 1_000_000:.2f}M"
+        if v >= 1_000:
+            return f"{v / 1_000:.2f}K"
+        return f"{v:,.0f}"
+
+    @rx.var
+    def price_display(self) -> str:
+        """Display-friendly price (e.g. '$150.00')."""
+        if self.quote is None:
+            return "n/a"
+        return f"${self.quote.price}"
+
+    @rx.var
+    def day_change_pct_display(self) -> str:
+        """Display-friendly day change % (e.g. '1.5' or '-2.3')."""
+        if self.quote is None:
+            return "n/a"
+        return f"{self.quote.day_change_pct}"
+
+    @rx.var
+    def high_52w_display(self) -> str:
+        """Display-friendly 52-week high (e.g. '$200.00')."""
+        if self.quote is None:
+            return "n/a"
+        return f"${self.quote.fifty_two_week_high}"
+
+    @rx.var
+    def low_52w_display(self) -> str:
+        """Display-friendly 52-week low (e.g. '$100.00')."""
+        if self.quote is None:
+            return "n/a"
+        return f"${self.quote.fifty_two_week_low}"
+
+    @rx.var
+    def has_quote(self) -> bool:
+        """True if a quote is loaded."""
+        return self.quote is not None
+
+    @rx.var
+    def has_fundamentals(self) -> bool:
+        """True if fundamentals are loaded."""
+        return self.fundamentals is not None
+
+    @rx.var
+    def has_news(self) -> bool:
+        """True if there is any news."""
+        return len(self.news) > 0
+
+    @rx.var
+    def news_display(self) -> list[str]:
+        """News items pre-rendered as HTML strings (server-side).
+
+        This avoids the TypedDict / HttpUrl / datetime issues that
+        happen when passing Pydantic models directly to components.
+        Each string is a full <div>...</div> with title, source, date, link.
+        """
+        from html import escape
+        items = []
+        for n in self.news:
+            title = escape(n.title)
+            source = escape(n.source)
+            when = escape(n.published_at.strftime("%Y-%m-%d %H:%M"))
+            url = escape(str(n.url))
+            items.append(
+                f'<div class="news-card">'
+                f'<h3>{title}</h3>'
+                f'<p class="meta">{source} · {when}</p>'
+                f'<a href="{url}" target="_blank" rel="noopener">Read more</a>'
+                f'</div>'
+            )
+        return items
+    def _fmt(self, value) -> str:
+        """Format a Decimal/None as a string."""
+        return "n/a" if value is None else str(value)
+
+    @rx.var
+    def fund_pe_ratio_display(self) -> str:
+        if self.fundamentals is None:
+            return "n/a"
+        return self._fmt(self.fundamentals.pe_ratio)
+
+    @rx.var
+    def fund_eps_display(self) -> str:
+        if self.fundamentals is None:
+            return "n/a"
+        return self._fmt(self.fundamentals.eps)
+
+    @rx.var
+    def fund_dividend_yield_display(self) -> str:
+        if self.fundamentals is None:
+            return "n/a"
+        return self._fmt(self.fundamentals.dividend_yield)
+
+    @rx.var
+    def fund_beta_display(self) -> str:
+        if self.fundamentals is None:
+            return "n/a"
+        return self._fmt(self.fundamentals.beta)
+
+    @rx.var
+    def fund_book_value_display(self) -> str:
+        if self.fundamentals is None:
+            return "n/a"
+        return self._fmt(self.fundamentals.book_value_per_share)
+
+    @rx.var
+    def fund_price_to_book_display(self) -> str:
+        if self.fundamentals is None:
+            return "n/a"
+        return self._fmt(self.fundamentals.price_to_book)
+
+    @rx.var
+    def fund_roe_display(self) -> str:
+        if self.fundamentals is None:
+            return "n/a"
+        return self._fmt(self.fundamentals.roe)
+
     # ─── Event handlers ──────────────────────────────────────────────
 
-    async def set_ticker(self, ticker: str) -> None:
-        """REQ-001..005: load all 4 data sources for a new ticker."""
+    async def load_initial(self) -> None:
+        """T-007: called by app.add_page(on_load=...) when the page mounts.
+
+        Loads data for the default ticker (AAPL) so the page isn't empty.
+        """
+        if self.quote is not None:
+            return  # already loaded (e.g. navigating back)
+        await self._load_all(self.ticker)
+
+    async def _load_all(self, ticker: str) -> None:
+        """Load all 4 data sources for a ticker. Shared by load_initial and set_ticker."""
         from reflex_openbb.data.equity import _validate_ticker
 
         normalized = _validate_ticker(ticker)
@@ -128,6 +277,20 @@ class EquityState(rx.State):
             self.error = str(e)
         finally:
             self.is_loading = False
+
+    async def set_ticker(self, form_data: dict) -> None:
+        """REQ-001..005: load all 4 data sources for a new ticker.
+
+        On success, populates quote, price_bars, fundamentals, news.
+        On ProviderError, sets stale_data=True and stores the error message.
+        Raises InvalidTickerError on validation failure (propagated from
+        the data layer's _validate_ticker call).
+        """
+        from reflex_openbb.data.equity import _validate_ticker
+
+        ticker = form_data.get("ticker", "AAPL") if isinstance(form_data, dict) else "AAPL"
+        normalized = _validate_ticker(ticker)
+        await self._load_all(normalized)
 
     async def set_period(self, period: str) -> None:
         """REQ-002: change the chart's date range and reload price history."""
@@ -156,7 +319,7 @@ class EquityState(rx.State):
             filename=filename,
         )
 
-    async def add_to_comparison(self, ticker: str) -> None:
+    async def add_to_comparison(self, form_data: dict) -> None:
         """REQ-009: add a ticker to the comparison overlay (max 5).
 
         REQ-009 UW: if the user attempts to add a 6th ticker, the system
@@ -164,9 +327,13 @@ class EquityState(rx.State):
         """
         from reflex_openbb.data.equity import _validate_ticker
 
+        ticker = form_data.get("ticker", "") if isinstance(form_data, dict) else ""
+        if not ticker:
+            return
         if len(self.comparison_tickers) >= 5:
             raise ValueError(
-                "Comparison overlay supports at most 5 tickers. Remove one before adding another."
+                "Comparison overlay supports at most 5 tickers. "
+                "Remove one before adding another."
             )
         normalized = _validate_ticker(ticker)
         if normalized in self.comparison_tickers:
@@ -181,7 +348,9 @@ class EquityState(rx.State):
             self.stale_data = True
             self.error = str(e)
             # Roll back the ticker we just added
-            self.comparison_tickers = [t for t in self.comparison_tickers if t != normalized]
+            self.comparison_tickers = [
+                t for t in self.comparison_tickers if t != normalized
+            ]
 
     async def remove_from_comparison(self, ticker: str) -> None:
         """REQ-009: remove a ticker from the comparison overlay."""

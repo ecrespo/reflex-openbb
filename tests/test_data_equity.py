@@ -57,11 +57,18 @@ def _make_obb_mock(
     fundamentals_result: dict | None = None,
     news_results: list | None = None,
 ) -> MagicMock:
-    """Build a MagicMock that mimics `obb.equity.*` and `obb.news.*` paths."""
+    """Build a MagicMock that mimics `obb.equity.*` and `obb.news.*` paths.
+
+    T-006 update: the OpenBB v4 API moved `quote` to `equity.price.quote`.
+    The result is a Pydantic model with `.model_dump()`, not a plain dict.
+    Our wrapper `equity._result_to_dict` handles both via hasattr checks.
+    """
     obb = MagicMock()
 
-    # obb.equity.quote(symbol="AAPL") returns an OBBject with .results
-    obb.equity.quote.return_value = _FakeOBBject(results=[quote_result] if quote_result else [])
+    # T-006: quote is now at obb.equity.price.quote (with provider kwarg)
+    obb.equity.price.quote.return_value = _FakeOBBject(
+        results=[quote_result] if quote_result else []
+    )
     # obb.equity.price.historical(symbol=..., period=...) returns OBBject with .to_dataframe()
     obb.equity.price.historical.return_value = _FakeOBBject(df=price_df)
     # obb.equity.fundamental.metrics(symbol=...) returns OBBject with .results
@@ -82,7 +89,7 @@ def fake_obb(monkeypatch: pytest.MonkeyPatch):
     - We can't easily replace the `openbb` module itself because pytest
       has already imported it. Instead, we patch the `obb` attribute on
       the live `openbb` module — and we also patch the four call sites
-      the data layer uses (equity.quote, equity.price.historical,
+      the data layer uses (equity.price.quote, equity.price.historical,
       equity.fundamental.metrics, news.company) by stubbing them at
       the openbb module level.
     - We then clear all caches so each test starts fresh.
@@ -132,7 +139,7 @@ class TestGetEquityQuote:
         """Happy path: returns an EquityQuote built from the SDK result."""
         from reflex_openbb.data import equity
 
-        fake_obb.equity.quote.return_value = _FakeOBBject(
+        fake_obb.equity.price.quote.return_value = _FakeOBBject(
             results=[
                 {
                     "symbol": "AAPL",
@@ -166,7 +173,7 @@ class TestGetEquityQuote:
         """REQ: Art. 6 — second call with same ticker hits the cache."""
         from reflex_openbb.data import equity
 
-        fake_obb.equity.quote.return_value = _FakeOBBject(
+        fake_obb.equity.price.quote.return_value = _FakeOBBject(
             results=[
                 {
                     "symbol": "AAPL",
@@ -186,14 +193,14 @@ class TestGetEquityQuote:
 
         assert q1 is q2  # cached
         # SDK was only called once (first call was a miss, second was a hit)
-        assert fake_obb.equity.quote.call_count == 1
+        assert fake_obb.equity.price.quote.call_count == 1
 
     @pytest.mark.asyncio
     async def test_normalizes_ticker_to_uppercase(self, fake_obb: MagicMock) -> None:
         """Lowercase input is normalized to uppercase."""
         from reflex_openbb.data import equity
 
-        fake_obb.equity.quote.return_value = _FakeOBBject(
+        fake_obb.equity.price.quote.return_value = _FakeOBBject(
             results=[
                 {
                     "symbol": "AAPL",
@@ -211,8 +218,8 @@ class TestGetEquityQuote:
         quote = await equity.get_equity_quote("aapl")
         assert quote.ticker == "AAPL"
         # SDK was called with uppercase
-        fake_obb.equity.quote.assert_called_once()
-        call_kwargs = fake_obb.equity.quote.call_args.kwargs
+        fake_obb.equity.price.quote.assert_called_once()
+        call_kwargs = fake_obb.equity.price.quote.call_args.kwargs
         assert call_kwargs.get("symbol") == "AAPL"
 
     @pytest.mark.asyncio
@@ -241,7 +248,7 @@ class TestGetEquityQuote:
         """When the SDK returns no results, raise ProviderError."""
         from reflex_openbb.data import equity
 
-        fake_obb.equity.quote.return_value = _FakeOBBject(results=[])
+        fake_obb.equity.price.quote.return_value = _FakeOBBject(results=[])
 
         with pytest.raises(data_errors.ProviderError):
             await equity.get_equity_quote("AAPL")

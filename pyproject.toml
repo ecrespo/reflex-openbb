@@ -33,6 +33,7 @@ dependencies = [
     "pydantic>=2.0",
     "polars>=0.20",
     "pandera>=0.18",
+    "pyarrow>=25.0.0",
 ]
 
 [project.scripts]
@@ -62,6 +63,9 @@ dev = [
 asyncio_mode = "auto"
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = [
+    "integration: live SDK tests (require network, slow)",
+]
 
 [tool.ruff]
 line-length = 100

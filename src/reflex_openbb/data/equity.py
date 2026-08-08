@@ -63,67 +63,119 @@ def _validate_ticker(ticker: str) -> str:
 # ─── Internal helpers ───────────────────────────────────────────────────────
 
 
-def _to_equity_quote(result: dict) -> EquityQuote:
-    """Build an EquityQuote from a single OpenBB result dict.
+def _result_to_dict(result) -> dict:
+    """Convert a Pydantic OpenBB result to a plain dict (model_dump)."""
+    if hasattr(result, "model_dump"):
+        return result.model_dump()
+    return dict(result)
+
+
+def _to_equity_quote(result) -> EquityQuote:
+    """Build an EquityQuote from a single OpenBB result.
 
     REQ: REQ-005 + Art. 5 (Decimal coercion).
+
+    T-006 update: works with the new YFinanceEquityQuoteData from
+    `obb.equity.price.quote`. The result is a Pydantic model.
+
+    - last_price → price
+    - prev_close + last_price → day_change_pct (computed, yfinance
+      returns change_percent as None sometimes)
+    - year_high → fifty_two_week_high
+    - year_low → fifty_two_week_low
+    - market_cap is not in price.quote; left as None.
     """
+    d = _result_to_dict(result)
+    last_price = d.get("last_price")
+    if last_price is None:
+        # price is required by EquityQuote — fall back to prev_close
+        last_price = d.get("prev_close")
+    if last_price is None:
+        last_price = 0
+    prev_close = d.get("prev_close")
+    # Prefer yfinance's change_percent; fall back to computing from prev_close
+    change_pct = d.get("change_percent")
+    if change_pct is None and prev_close:
+        change_pct = (float(last_price) - float(prev_close)) / float(prev_close) * 100
+    if change_pct is None:
+        change_pct = 0
+    # 52-week high/low: prefer year_high/year_low; fall back to high/low (daily)
+    high_52w = d.get("year_high") or d.get("high")
+    if high_52w is None:
+        high_52w = 0
+    low_52w = d.get("year_low") or d.get("low")
+    if low_52w is None:
+        low_52w = 0
     return EquityQuote(
-        ticker=result.get("symbol", ""),
-        price=result["last_price"],
-        day_change_pct=result["change_percent"],
-        market_cap=result.get("market_cap"),
-        volume=result.get("volume", 0),
-        fifty_two_week_high=result["high"],
-        fifty_two_week_low=result["low"],
+        ticker=d.get("symbol", ""),
+        price=last_price,
+        day_change_pct=change_pct,
+        market_cap=d.get("market_cap"),
+        volume=d.get("volume", 0) or 0,
+        fifty_two_week_high=high_52w,
+        fifty_two_week_low=low_52w,
         fetched_at=datetime.now(timezone.utc),
-        provider=result.get("provider", "unknown"),
+        provider=d.get("provider", "yfinance"),
     )
 
 
-def _to_equity_fundamentals(result: dict) -> EquityFundamentals:
-    """Build an EquityFundamentals from a single OpenBB result dict.
+def _to_equity_fundamentals(result) -> EquityFundamentals:
+    """Build an EquityFundamentals from a single OpenBB result.
 
     REQ: REQ-003 + Art. 5.
+
+    T-006 update: works with YFinanceKeyMetricsData from
+    `obb.equity.fundamental.metrics`. The result is a Pydantic model.
     """
+    d = _result_to_dict(result)
     return EquityFundamentals(
-        ticker=result.get("symbol", ""),
-        pe_ratio=result.get("pe_ratio"),
-        eps=result.get("eps"),
-        dividend_yield=result.get("dividend_yield"),
-        beta=result.get("beta"),
-        book_value_per_share=result.get("book_value_per_share"),
-        price_to_book=result.get("price_to_book"),
-        roe=result.get("roe"),
+        ticker=d.get("symbol", ""),
+        pe_ratio=d.get("pe_ratio"),
+        # T-006: yfinance uses `eps_ttm`; old API used `eps`. Accept both.
+        eps=d.get("eps_ttm", d.get("eps")),
+        dividend_yield=d.get("dividend_yield"),
+        beta=d.get("beta"),
+        # yfinance uses `book_value`; old API used `book_value_per_share`.
+        book_value_per_share=d.get("book_value", d.get("book_value_per_share")),
+        price_to_book=d.get("price_to_book"),
+        # yfinance uses `return_on_equity`; old API used `roe`.
+        roe=d.get("return_on_equity", d.get("roe")),
         fetched_at=datetime.now(timezone.utc),
-        provider=result.get("provider", "unknown"),
+        provider=d.get("provider", "yfinance"),
     )
 
 
-def _to_news_items(results: list) -> list[NewsItem]:
-    """Build a list of NewsItem from a list of OpenBB result dicts.
+def _to_news_items(results) -> list[NewsItem]:
+    """Build a list of NewsItem from a list of OpenBB results.
 
     REQ: REQ-004 + data-model §NewsItem.
     Returns a list sorted descending by published_at.
+
+    T-006 update: works with YFinanceCompanyNewsData from
+    `obb.news.company`. The result is a Pydantic model with
+    fields: id, title, source, url, date, summary.
     """
     items: list[NewsItem] = []
     for r in results:
-        # published_at may be a string or a datetime
-        published = r["published_at"]
+        d = _result_to_dict(r)
+        # `date` may be a string, datetime, or pd.Timestamp
+        published = d.get("date") or d.get("published_at")
         if isinstance(published, str):
-            # OpenBB typically uses ISO 8601 with Z suffix
             if published.endswith("Z"):
                 published = published[:-1] + "+00:00"
             published = datetime.fromisoformat(published)
-
+        if published is None:
+            continue
+        # id might be missing; synthesize one
+        article_id = d.get("id") or f"{d.get('url', '')}-{published.isoformat()}"
         items.append(
             NewsItem(
-                id=r["id"],
-                title=r["title"],
-                source=r["source"],
-                url=r["url"],
+                id=str(article_id),
+                title=d.get("title", ""),
+                source=d.get("source", ""),
+                url=d.get("url", "https://example.com"),
                 published_at=published,
-                summary=r.get("summary"),
+                summary=d.get("summary") or d.get("text") or d.get("body"),
             )
         )
     # Sort descending by published_at (data-model requirement)
@@ -138,6 +190,10 @@ async def get_equity_quote(ticker: str) -> EquityQuote:
     """Get the current quote for a ticker. REQ: REQ-005.
 
     Cache: 5 min, key = `quote:{TICKER}`.
+
+    T-006 fix: OpenBB v4 moved `quote` from `obb.equity.quote` to
+    `obb.equity.price.quote`. The YFinanceEquityQuoteData has many
+    fields; we map the relevant ones to EquityQuote.
     """
     normalized = _validate_ticker(ticker)
     cache_key = f"quote:{normalized}"
@@ -147,10 +203,12 @@ async def get_equity_quote(ticker: str) -> EquityQuote:
         import openbb as _openbb
 
         try:
-            obb_obj = _openbb.obb.equity.quote(symbol=normalized)
+            obb_obj = _openbb.obb.equity.price.quote(
+                symbol=normalized, provider="yfinance"
+            )
         except Exception as e:
             raise ProviderError(
-                provider="unknown",
+                provider="yfinance",
                 status_code=None,
                 retry_after=None,
                 original=str(e),
@@ -159,7 +217,7 @@ async def get_equity_quote(ticker: str) -> EquityQuote:
         results = getattr(obb_obj, "results", None) or []
         if not results:
             raise ProviderError(
-                provider="unknown",
+                provider="yfinance",
                 status_code=None,
                 retry_after=None,
                 original=f"No quote data for {normalized}",
@@ -178,6 +236,9 @@ async def get_equity_price_history(
     """Get OHLC price history for a ticker. REQ: REQ-001, REQ-002.
 
     Cache: 5 min for 1mo/6mo/1y, 1 day for 5y/max.
+
+    T-006 fix: the yfinance historical returns a pandas DataFrame
+    (not polars). Use .empty (pandas) instead of .is_empty() (polars).
     """
     normalized = _validate_ticker(ticker)
     cache_key = f"price:{normalized}:{period}"
@@ -186,23 +247,49 @@ async def get_equity_price_history(
         import openbb as _openbb
 
         try:
-            obb_obj = _openbb.obb.equity.price.historical(symbol=normalized, period=period)
+            obb_obj = _openbb.obb.equity.price.historical(
+                symbol=normalized, period=period, provider="yfinance"
+            )
         except Exception as e:
             raise ProviderError(
-                provider="unknown",
+                provider="yfinance",
                 status_code=None,
                 retry_after=None,
                 original=str(e),
             ) from e
 
         df = obb_obj.to_dataframe()
-        if df is None or df.is_empty():
+        if df is None or len(df) == 0:
             raise ProviderError(
-                provider="unknown",
+                provider="yfinance",
                 status_code=None,
                 retry_after=None,
                 original=f"No price history for {normalized} ({period})",
             )
+
+        # T-006 fix: yfinance returns a pandas DataFrame; our schema
+        # expects a polars DataFrame. Convert (the dataframe is small
+        # — typically 1-1000 rows).
+        import polars as pl
+        if not isinstance(df, pl.DataFrame):
+            if hasattr(df, "to_pandas"):  # polars → pandas (shouldn't happen here)
+                df = df.to_pandas()
+            # pandas: ensure 'date' is a column
+            if hasattr(df, "reset_index") and df.index.name is not None and "date" not in df.columns:
+                df = df.reset_index()
+            # Convert pandas → polars
+            try:
+                df = pl.from_pandas(df)
+            except Exception as e:
+                raise ProviderError(
+                    provider="yfinance",
+                    status_code=None,
+                    retry_after=None,
+                    original=f"Could not convert historical df to polars: {e}",
+                ) from e
+        # Normalize: rename 'date' if index was named differently
+        if "date" not in df.columns and df.columns[0] not in ("date",):
+            df = df.rename({df.columns[0]: "date"})
 
         return ohlc_bars_from_dataframe(df)
 
@@ -214,6 +301,8 @@ async def get_equity_fundamentals(ticker: str) -> EquityFundamentals:
     """Get fundamental metrics for a ticker. REQ: REQ-003.
 
     Cache: 1 day, key = `fund:{TICKER}`.
+
+    T-006 fix: pass provider explicitly. Result is a Pydantic model.
     """
     normalized = _validate_ticker(ticker)
     cache_key = f"fund:{normalized}"
@@ -222,10 +311,12 @@ async def get_equity_fundamentals(ticker: str) -> EquityFundamentals:
         import openbb as _openbb
 
         try:
-            obb_obj = _openbb.obb.equity.fundamental.metrics(symbol=normalized)
+            obb_obj = _openbb.obb.equity.fundamental.metrics(
+                symbol=normalized, provider="yfinance"
+            )
         except Exception as e:
             raise ProviderError(
-                provider="unknown",
+                provider="yfinance",
                 status_code=None,
                 retry_after=None,
                 original=str(e),
@@ -234,7 +325,7 @@ async def get_equity_fundamentals(ticker: str) -> EquityFundamentals:
         results = getattr(obb_obj, "results", None) or []
         if not results:
             raise ProviderError(
-                provider="unknown",
+                provider="yfinance",
                 status_code=None,
                 retry_after=None,
                 original=f"No fundamentals for {normalized}",
@@ -261,10 +352,12 @@ async def get_equity_news(ticker: str, limit: int = 10) -> list[NewsItem]:
         import openbb as _openbb
 
         try:
-            obb_obj = _openbb.obb.news.company(symbol=normalized, limit=limit)
+            obb_obj = _openbb.obb.news.company(
+                symbol=normalized, limit=limit, provider="yfinance"
+            )
         except Exception as e:
             raise ProviderError(
-                provider="unknown",
+                provider="yfinance",
                 status_code=None,
                 retry_after=None,
                 original=str(e),

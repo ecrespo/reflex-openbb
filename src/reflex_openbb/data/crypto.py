@@ -74,24 +74,54 @@ async def get_crypto_price_history(
     def _fetch() -> list[OHLCBar]:
         import openbb as _openbb
 
+        # yfinance requires the "-USD" suffix (e.g. "BTC-USD", "ETH-USD").
+        # If the user passed just "BTC" or "ETH", add it. Otherwise pass
+        # the symbol as-is (e.g. "BTC-USD" already, or "BTCUSDT" for
+        # binance provider).
+        provider_symbol = normalized
+        if "-" not in provider_symbol and provider_symbol.isalpha():
+            # Heuristic: 3-5 letter alphabetic symbol → yfinance crypto
+            provider_symbol = f"{provider_symbol}-USD"
+
         try:
-            obb_obj = _openbb.obb.crypto.price.historical(symbol=normalized, period=period)
+            obb_obj = _openbb.obb.crypto.price.historical(
+                symbol=provider_symbol, period=period, provider="yfinance"
+            )
         except Exception as e:
             raise ProviderError(
-                provider="unknown",
+                provider="yfinance",
                 status_code=None,
                 retry_after=None,
                 original=str(e),
             ) from e
 
         df = obb_obj.to_dataframe()
-        if df is None or df.is_empty():
+        if df is None or len(df) == 0:
             raise ProviderError(
-                provider="unknown",
+                provider="yfinance",
                 status_code=None,
                 retry_after=None,
                 original=f"No price history for {normalized} ({period})",
             )
+
+        # T-006 fix: yfinance returns pandas; convert to polars
+        import polars as pl
+        if not isinstance(df, pl.DataFrame):
+            if hasattr(df, "to_pandas"):  # polars → pandas (shouldn't happen)
+                df = df.to_pandas()
+            if hasattr(df, "reset_index") and df.index.name is not None and "date" not in df.columns:
+                    df = df.reset_index()
+            try:
+                df = pl.from_pandas(df)
+            except Exception as e:
+                raise ProviderError(
+                    provider="yfinance",
+                    status_code=None,
+                    retry_after=None,
+                    original=f"Could not convert crypto df to polars: {e}",
+                ) from e
+        if "date" not in df.columns and df.columns[0] not in ("date",):
+            df = df.rename({df.columns[0]: "date"})
 
         return ohlc_bars_from_dataframe(df)
 

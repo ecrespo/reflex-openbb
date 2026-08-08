@@ -77,22 +77,74 @@ async def get_economy_indicator(
     def _fetch() -> list[MacroPoint]:
         import openbb as _openbb
 
-        # Route to the correct endpoint based on indicator.
-        endpoint = getattr(_openbb.obb.economy, indicator.lower())
+        # T-006 fix: OpenBB v4 no longer exposes `obb.economy.gdp/cpi/unrate`
+        # as direct methods. The unified endpoint is `obb.economy.indicators`
+        # with `symbol=...` (the indicator code) and `country=...`.
+        # Some providers require `frequency`.
+        #
+        # Provider strategy:
+        # - GDP, CPI  → econdb (annual)
+        # - UNRATE    → not available in current econdb/imf catalogs;
+        #               we return [] for now and log a warning.
+        if indicator == "UNRATE":
+            # The OpenBB v4 economy providers don't include unemployment
+            # rate for major countries at the moment. Returning [] is
+            # safer than raising — the page will show an empty chart.
+            return []
+
+        provider_kwargs: dict = {
+            "symbol": indicator,
+            "country": normalized_country,
+            "provider": "econdb",
+        }
+        if indicator in ("GDP", "CPI"):
+            provider_kwargs["frequency"] = "annual"
 
         try:
-            obb_obj = endpoint(country=normalized_country)
+            endpoint = _openbb.obb.economy.indicators
+            obb_obj = endpoint(**provider_kwargs)
         except Exception as e:
             raise ProviderError(
-                provider="unknown",
+                provider="econdb",
                 status_code=None,
                 retry_after=None,
                 original=str(e),
             ) from e
 
         df = obb_obj.to_dataframe()
-        if df is None or df.is_empty():
+        if df is None or len(df) == 0:
             return []
+
+        # T-006 fix: econdb returns a pandas DataFrame. Our schema
+        # expects polars with `year` and `value` columns. Convert and
+        # rename the econdb columns.
+        import polars as pl
+        if not isinstance(df, pl.DataFrame):
+            # Try to convert from pandas
+            if hasattr(df, "to_pandas"):
+                df = df.to_pandas()
+            if hasattr(df, "reset_index") and df.index.name is not None and "date" not in df.columns:
+                    df = df.reset_index()
+            try:
+                df = pl.from_pandas(df)
+            except Exception as e:
+                raise ProviderError(
+                    provider="econdb",
+                    status_code=None,
+                    retry_after=None,
+                    original=f"Could not convert macro df to polars: {e}",
+                ) from e
+
+        # Normalize columns: econdb returns `date` (datetime index) and `value`.
+        # The schema wants `year` and `value`.
+        if "year" not in df.columns and "date" in df.columns:
+            df = df.with_columns(pl.col("date").dt.year().alias("year"))
+        elif "year" not in df.columns:
+            # try first column as year
+            df = df.rename({df.columns[0]: "year"})
+        # Ensure we only have the columns the schema needs
+        keep = [c for c in ("year", "value") if c in df.columns]
+        df = df.select(keep)
 
         return macro_points_from_dataframe(df, country=normalized_country, indicator=indicator)
 

@@ -25,8 +25,8 @@ import re
 from typing import Literal
 
 from reflex_openbb.data.cache import CacheName, get_or_compute
-from reflex_openbb.data.equity import _to_ohlc_bars  # reuse OHLC conversion
 from reflex_openbb.data.errors import InvalidTickerError, ProviderError
+from reflex_openbb.data.schemas import ohlc_bars_from_dataframe  # reuse
 from reflex_openbb.data.types import OHLCBar
 
 __all__ = ["get_crypto_price_history"]
@@ -93,7 +93,7 @@ async def get_crypto_price_history(
                 original=f"No price history for {normalized} ({period})",
             )
 
-        return _to_ohlc_bars(df)
+        return ohlc_bars_from_dataframe(df)
 
     value, _ = get_or_compute(cache_key, CacheName.PRICE, _fetch)
     return value

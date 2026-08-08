@@ -16,6 +16,7 @@ import reflex as rx
 
 from reflex_openbb.components.crypto_chart import crypto_chart
 from reflex_openbb.components.date_range import date_range
+from reflex_openbb.components.export_button import export_button
 from reflex_openbb.state.crypto_state import CryptoState
 
 __all__ = ["crypto_page"]
@@ -64,10 +65,16 @@ def _loading_indicator() -> rx.Component:
 
 
 def crypto_page() -> rx.Component:
-    """The /crypto/{symbol} page (T-402)."""
+    """The /crypto page (T-402)."""
     return rx.container(
         rx.vstack(
-            rx.heading(f"{CryptoState.symbol} — Crypto", size="7"),
+            rx.hstack(
+                rx.heading(f"{CryptoState.symbol} — Crypto", size="7"),
+                rx.spacer(),
+                export_button(CryptoState),
+                align="center",
+                width="100%",
+            ),
             _stale_banner(),
             _symbol_input(),
             date_range(CryptoState),

@@ -17,7 +17,9 @@ from __future__ import annotations
 
 import reflex as rx
 
+from reflex_openbb.components.comparison_controls import comparison_controls
 from reflex_openbb.components.date_range import date_range
+from reflex_openbb.components.export_button import export_button
 from reflex_openbb.components.fundamentals_table import fundamentals_table
 from reflex_openbb.components.kpi_grid import kpi_grid
 from reflex_openbb.components.news_feed import news_feed
@@ -70,20 +72,30 @@ def _loading_indicator() -> rx.Component:
 
 
 def equity_page() -> rx.Component:
-    """The /equity/{ticker} page.
+    """The /equity page (T-307).
 
     Composes the 5 components with EquityState. Reactive — when state
     fields change, the components re-render.
     """
     return rx.container(
         rx.vstack(
-            rx.heading(f"{EquityState.ticker} — Equity", size="7"),
+            rx.hstack(
+                rx.heading(f"{EquityState.ticker} — Equity", size="7"),
+                rx.spacer(),
+                export_button(EquityState),
+                align="center",
+                width="100%",
+            ),
             _stale_banner(),
             _ticker_input(),
             date_range(EquityState),
+            comparison_controls(),
             _loading_indicator(),
             kpi_grid(EquityState.quote),
-            price_chart(EquityState.price_chart_data, comparison=[]),
+            price_chart(
+                EquityState.price_chart_data,
+                comparison=EquityState.comparison_chart_data,
+            ),
             rx.grid(
                 rx.box(fundamentals_table(EquityState.fundamentals)),
                 rx.box(news_feed(EquityState.news)),

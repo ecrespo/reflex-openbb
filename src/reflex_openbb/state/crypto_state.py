@@ -1,16 +1,17 @@
-"""CryptoState (T-203).
+"""CryptoState (T-203 + T-505).
 
-The Reflex state for the /crypto/{symbol} page. Wires the crypto data
+The Reflex state for the /crypto page. Wires the crypto data
 function into a single state class the page can subscribe to.
 
 Fields:
   symbol, price_bars, is_loading, error, stale_data
 
 Event handlers:
-  - set_symbol(symbol)  — REQ-006: validates, stores, and loads price history
+  - set_symbol(symbol)   — REQ-006: validates, stores, and loads price history
+  - export_csv()         — REQ-008: trigger CSV download
 
 Computed vars:
-  - price_chart_data    — list[dict] from price_bars (for the chart)
+  - price_chart_data     — list[dict] from price_bars (for the chart)
 
 Constitution Art. 3 (OpenBB only): the state does NOT call obb.*.
 It delegates to data.crypto.* which is the only place that calls the SDK.
@@ -28,7 +29,7 @@ __all__ = ["CryptoState", "get_crypto_price_history"]
 
 
 class CryptoState(rx.State):
-    """State for the /crypto/{symbol} page."""
+    """State for the /crypto page."""
 
     # ─── User-controlled field ───────────────────────────────────────
     symbol: str = "BTC"
@@ -51,15 +52,7 @@ class CryptoState(rx.State):
     # ─── Event handlers ──────────────────────────────────────────────
 
     async def set_symbol(self, symbol: str) -> None:
-        """REQ-006: validate symbol and load its price history.
-
-        The data layer's get_crypto_price_history already validates the
-        symbol (raises InvalidTickerError) and raises ProviderError on
-        SDK failure. We translate those into the state's error flags.
-
-        Args:
-            symbol: crypto symbol (e.g. "BTC", "ETH", "BTC-USD").
-        """
+        """REQ-006: validate symbol and load its price history."""
         self.is_loading = True
         self.error = None
         self.stale_data = False
@@ -67,7 +60,6 @@ class CryptoState(rx.State):
             self.price_bars = await get_crypto_price_history(symbol)
             self.symbol = symbol.upper()
         except InvalidTickerError:
-            # Re-raise — the form should surface the validation error.
             self.is_loading = False
             raise
         except ProviderError as e:
@@ -75,3 +67,14 @@ class CryptoState(rx.State):
             self.error = str(e)
         finally:
             self.is_loading = False
+
+    async def export_csv(self) -> None:
+        """REQ-008: trigger a CSV download of the current price_bars."""
+        from reflex_openbb.services.csv_export import to_csv_bars
+
+        csv_data = to_csv_bars(self.price_bars)
+        filename = f"{self.symbol.lower()}.csv"
+        return rx.download(
+            data=csv_data,
+            filename=filename,
+        )

@@ -1,6 +1,6 @@
-"""EquityState (T-202).
+"""EquityState (T-202 + T-505).
 
-The Reflex state for the /equity/{ticker} page. Wires the equity data
+The Reflex state for the /equity page. Wires the equity data
 functions into a single state class the page can subscribe to.
 
 Fields (per specs/technical/v1-architecture.md §4):
@@ -10,8 +10,9 @@ Fields (per specs/technical/v1-architecture.md §4):
 Event handlers:
   - set_ticker(ticker)        — REQ-001..005: load all 4 data sources
   - set_period(period)        — REQ-002: reload price history only
-  - (Future) load_quote, load_price, load_fundamentals, load_news
-  - (Future) add/remove_comparison_ticker — REQ-009 (multi-ticker overlay)
+  - export_csv()              — REQ-008: trigger CSV download
+  - add_to_comparison(ticker) — REQ-009: add ticker to overlay
+  - remove_from_comparison()  — REQ-009: remove last ticker
 
 Computed vars:
   - price_chart_data          — REQ-001: list[dict] from price_bars
@@ -60,7 +61,7 @@ Period = Literal["1mo", "6mo", "1y", "5y", "max"]
 
 
 class EquityState(rx.State):
-    """State for the /equity/{ticker} page."""
+    """State for the /equity page."""
 
     # ─── User-controlled fields ──────────────────────────────────────
     ticker: str = "AAPL"
@@ -72,7 +73,7 @@ class EquityState(rx.State):
     fundamentals: EquityFundamentals | None = None
     news: list[NewsItem] = []  # noqa: RUF012 (rx.State mutable defaults are safe)
 
-    # ─── Comparison overlay (REQ-009, future) ───────────────────────
+    # ─── Comparison overlay (REQ-009) ────────────────────────────────
     comparison_tickers: list[str] = []  # noqa: RUF012
     comparison_bars: dict[str, list[OHLCBar]] = {}  # noqa: RUF012
 
@@ -88,16 +89,28 @@ class EquityState(rx.State):
         """REQ-001: list[dict] from price_bars for the chart component."""
         return [b.model_dump(mode="json") for b in self.price_bars]
 
+    @rx.var
+    def comparison_chart_data(self) -> list[dict]:
+        """REQ-009: list[dict] from comparison_bars for the chart overlay.
+
+        Each row is {"date": ..., "close_compare": ...} for the recharts
+        secondary line.
+        """
+        rows: list[dict] = []
+        for _ticker, bars in self.comparison_bars.items():
+            for b in bars:
+                rows.append(
+                    {
+                        "date": b.date.isoformat(),
+                        "close_compare": str(b.close),
+                    }
+                )
+        return rows
+
     # ─── Event handlers ──────────────────────────────────────────────
 
     async def set_ticker(self, ticker: str) -> None:
-        """REQ-001..005: load all 4 data sources for a new ticker.
-
-        On success, populates quote, price_bars, fundamentals, news.
-        On ProviderError, sets stale_data=True and stores the error message.
-        Raises InvalidTickerError on validation failure (propagated from
-        the data layer's _validate_ticker call).
-        """
+        """REQ-001..005: load all 4 data sources for a new ticker."""
         from reflex_openbb.data.equity import _validate_ticker
 
         normalized = _validate_ticker(ticker)
@@ -117,11 +130,7 @@ class EquityState(rx.State):
             self.is_loading = False
 
     async def set_period(self, period: str) -> None:
-        """REQ-002: change the chart's date range and reload price history.
-
-        Args:
-            period: one of '1mo', '6mo', '1y', '5y', 'max'.
-        """
+        """REQ-002: change the chart's date range and reload price history."""
         if period not in _PERIODS:
             raise ValueError(f"period must be one of {_PERIODS}, got {period!r}")
         self.period = period
@@ -135,3 +144,47 @@ class EquityState(rx.State):
             self.error = str(e)
         finally:
             self.is_loading = False
+
+    async def export_csv(self) -> None:
+        """REQ-008: trigger a CSV download of the current price_bars."""
+        from reflex_openbb.services.csv_export import to_csv_bars
+
+        csv_data = to_csv_bars(self.price_bars)
+        filename = f"{self.ticker.lower()}_{self.period}.csv"
+        return rx.download(
+            data=csv_data,
+            filename=filename,
+        )
+
+    async def add_to_comparison(self, ticker: str) -> None:
+        """REQ-009: add a ticker to the comparison overlay (max 5).
+
+        REQ-009 UW: if the user attempts to add a 6th ticker, the system
+        shall reject the request and display a notification.
+        """
+        from reflex_openbb.data.equity import _validate_ticker
+
+        if len(self.comparison_tickers) >= 5:
+            raise ValueError(
+                "Comparison overlay supports at most 5 tickers. Remove one before adding another."
+            )
+        normalized = _validate_ticker(ticker)
+        if normalized in self.comparison_tickers:
+            return  # already added
+        self.comparison_tickers = [*self.comparison_tickers, normalized]
+        try:
+            self.comparison_bars = {
+                **self.comparison_bars,
+                normalized: await get_equity_price_history(normalized, self.period),
+            }
+        except ProviderError as e:
+            self.stale_data = True
+            self.error = str(e)
+            # Roll back the ticker we just added
+            self.comparison_tickers = [t for t in self.comparison_tickers if t != normalized]
+
+    async def remove_from_comparison(self, ticker: str) -> None:
+        """REQ-009: remove a ticker from the comparison overlay."""
+        self.comparison_tickers = [t for t in self.comparison_tickers if t != ticker]
+        new_bars = {k: v for k, v in self.comparison_bars.items() if k != ticker}
+        self.comparison_bars = new_bars

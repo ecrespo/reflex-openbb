@@ -1,6 +1,6 @@
 """The Reflex app entry point.
 
-T-005 stub: a minimal app with the home page.
+T-005 + T-307: minimal app with home + equity routes.
 
 Usage:
     uv run reflex-openbb           # uses `main()` as the console script
@@ -11,7 +11,7 @@ The console script declared in pyproject.toml points to `main()`.
 
 import reflex as rx
 
-from reflex_openbb.pages import home
+from reflex_openbb.pages import equity, home
 
 
 def index() -> rx.Component:
@@ -23,12 +23,18 @@ def index() -> rx.Component:
     return home.index()
 
 
+def equity_route() -> rx.Component:
+    """The /equity/[ticker] page (T-307)."""
+    return equity.equity_page()
+
+
 # Build the app. The `app` is a module-level `rx.App` so that `reflex run`
 # (which introspects the module to find an `app` symbol) can find it.
 app = rx.App()
 app.add_page(index, route="/")
-# Placeholder route for Phase 3 (T-307). Removed once the equity page exists.
-app.add_page(index, route="/equity/[ticker]")
+# The route param is `[symbol]` to avoid shadowing EquityState.ticker
+# (reflex raises DynamicRouteArgShadowsStateVarError otherwise).
+app.add_page(equity_route, route="/equity/[symbol]")
 
 
 def main() -> None:
